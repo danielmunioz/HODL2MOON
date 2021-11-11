@@ -24,38 +24,26 @@ from transformers import AdamW, get_scheduler, DistilBertModel, DistilBertConfig
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-#loads only backbone weights weights
+#loads only backbone weights
 os.environ['KAGGLE_CONFIG_DIR'] = '/content'
 !kaggle datasets download -d muniozdaniel0/final-distilbert-weight
 !unzip ./final-distilbert-weight.zip -d ./final-distilbert-weight
 !rm ./final-distilbert-weight.zip
 
-def tokenizer_map(element):
-  return tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
+#loading backbone checkpoint ----may be a good idea to change it to 'backbone_chackpoint'
+checkpoint = torch.load('./final-distilbert-weight/distilbert_reddit_epoch_2_iter_final.pt', map_location=device)
+checkpoint['model'] = OrderedDict({k[11:]: v for k, v in checkpoint['model'].items() if 'distilbert' in k})  #OrderedDict to keep it consistant with pytorch
 
-class Data_collator():
-  def __init__(self, tokenizer): 
-    self.tokenizer = tokenizer
-
-  def __call__(self, batch):
-    #Assumes we are wotking with a list of dictionaries
-    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
-                     'attention_mask': [element['attention_mask'] for element in batch]}
-    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
-    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
-
-    return {'input_ids': training_samples['input_ids'],
-            'attention_mask': training_samples['attention_mask'],
-            'labels': labels}
+"""###Models"""
 
 class DistilBertRegressor(nn.Module):
-  def __init__(self, weights=None, freeze_backbone=False):
+  def __init__(self, backbone_weights=None, freeze_backbone=False):
     super().__init__()  
     self.backbone = DistilBertModel(config=DistilBertConfig())
     
-    if weights:
-      self.backbone.load_state_dict(weights)
-      print('Weights loaded succesfully')
+    if backbone_weights:
+      self.backbone.load_state_dict(backbone_weights)
+      print('backbone weights loaded succesfully')
     if freeze_backbone:
       for param in self.backbone.parameters():
         param.requires_grad = False
@@ -77,21 +65,69 @@ class DistilBertRegressor(nn.Module):
     else:
       return hidden_embeddings, out
 
-#loading checkpoint
-checkpoint = torch.load('./final-distilbert-weight/distilbert_reddit_epoch_2_iter_final.pt', map_location=device)
-checkpoint['model'] = OrderedDict({k[11:]: v for k, v in checkpoint['model'].items() if 'distilbert' in k})  #OrderedDict to keep it consistant with pytorch
+#### ---Current Classifier Version---
+class DistilBertClassifier(nn.Module):
+  def __init__(self, out_dim=2, backbone_weights=None, freeze_backbone=False):
+    super().__init__()  
+    self.backbone = DistilBertModel(config=DistilBertConfig())
+    
+    if backbone_weights:
+      self.backbone.load_state_dict(backbone_weights)
+      print('backbone weights loaded succesfully')
+    if freeze_backbone:
+      for param in self.backbone.parameters():
+        param.requires_grad = False
+
+    self.linear =  nn.Linear(self.backbone.config.dim, self.backbone.config.dim)  #'backbone.config.dim' stores the output dimension of the backbone
+    self.dropout = nn.Dropout(0.2)
+    self.classifier = nn.Linear(self.backbone.config.dim, out_dim)
+  
+  def forward(self, input_ids, attention_mask, return_hidden_embeddings=False):
+    hidden_embeddings = self.backbone(input_ids=input_ids, attention_mask=attention_mask)[0]
+    out = self.linear(hidden_embeddings[:, 0, :])
+    out = F.relu(out)
+    out = self.dropout(out)
+    out = self.classifier(out)
+
+    if not return_hidden_embeddings:
+      return out
+    else:
+      return hidden_embeddings, out
+
+"""###sst-2 Regressor"""
+
+#sst-2 tokenizer_fn and collator
+def tokenizer_map(element):
+  return tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
+
+class Data_collator():
+  def __init__(self, tokenizer): 
+    self.tokenizer = tokenizer
+
+  def __call__(self, batch):
+    #Assumes we are wotking with a list of dictionaries
+    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
+                     'attention_mask': [element['attention_mask'] for element in batch]}
+    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
+    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
+
+    return {'input_ids': training_samples['input_ids'],
+            'attention_mask': training_samples['attention_mask'],
+            'labels': labels}
+
+#defining tokenizer and DataCollator
 tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')                    #using ver. 4.10.0.dev0
-
-#load dataset
-sst_dataset = load_dataset("sst", "default")
-tokenized_sst_dataset = sst_dataset.map(tokenizer_map, remove_columns=['sentence', 'tokens', 'tree'], batched=True)
-
 collate_fn = Data_collator(tokenizer)
+
+#load sst-2 dataset
+sst_dataset = load_dataset("sst", "default")
+
+tokenized_sst_dataset = sst_dataset.map(tokenizer_map, remove_columns=['sentence', 'tokens', 'tree'], batched=True)
 sst_train_loader = DataLoader(tokenized_sst_dataset['train'], shuffle=True, batch_size=16, collate_fn=collate_fn)
 
 #Initializing model
-#model = DistilBertRegressor(weights=checkpoint['model']).to(device)
-model = DistilBertRegressor(weights=checkpoint['model'], freeze_backbone=True).to(device)
+#model = DistilBertRegressor(backbone_weights=checkpoint['model']).to(device)
+model = DistilBertRegressor(backbone_weights=checkpoint['model'], freeze_backbone=True).to(device)
 
 #defining loss and optimizer
 optim = AdamW(model.parameters(), lr=1e-5)
@@ -135,7 +171,7 @@ for epoch in range(num_epochs):
               'local_loss':loss.item()},
               './Distilbert_reddit_sst_weights_frozenbackbone/Distilbert_reddit_sst_epoch_{}.pt'.format(epoch))
 
-"""####Testing"""
+"""####Regressor Testing"""
 
 #loading weights
 os.environ['KAGGLE_CONFIG_DIR'] = '/content'
@@ -184,4 +220,380 @@ out_values.min(), out_values.max()
 
 figure(figsize=(24, 6), dpi=80)
 plt.scatter(labels_values.numpy(), dummy_y)
+
+"""###sst-2 binary"""
+
+import os
+import pandas as pd
+import tensorflow as tf
+print(tf.__version__)
+
+#downloading binary sst-2
+data_dir = tf.keras.utils.get_file(
+    fname='SST-2.zip', 
+    origin='https://dl.fbaipublicfiles.com/glue/data/SST-2.zip',
+    extract=True)
+data_dir = os.path.splitext(data_dir)[0]
+
+class sst_binary_dataset(Dataset):
+  def __init__(self, dataframe):
+    self.df = dataframe
+
+  def __len__(self):
+    return len(self.df)
+  
+  def __getitem__(self, idx):
+    return {'input_ids': self.df.iloc[idx]['input_ids'], 
+            'attention_mask': self.df.iloc[idx]['attention_mask'],
+            'label': self.df.iloc[idx]['label']}
+
+class Data_collator():
+  def __init__(self, tokenizer): 
+    self.tokenizer = tokenizer
+
+  def __call__(self, batch):
+    #Assumes we are wotking with a list of dictionaries
+    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
+                     'attention_mask': [element['attention_mask'] for element in batch]}
+    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
+    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
+
+    return {'input_ids': training_samples['input_ids'],
+            'attention_mask': training_samples['attention_mask'],
+            'labels': labels}
+
+def tokenizer_map_df(element):
+  #sst-2 tokenizer_df
+  tokenized_elemen = tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
+  return element.append(pd.Series([tokenized_elemen['input_ids'], tokenized_elemen['attention_mask']], index=['input_ids', 'attention_mask']))
+
+#defining tokenizer and dcollator
+tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased') #using ver. 4.10.0.dev0
+collate_fn = Data_collator(tokenizer)
+
+#loading dataframes
+train_df = pd.read_csv(os.path.join(data_dir, 'train.tsv'), sep='\t')
+dev_df = pd.read_csv(os.path.join(data_dir, 'dev.tsv'), sep='\t')
+test_df = pd.read_csv(os.path.join(data_dir, 'test.tsv'), sep='\t')
+
+#tokenizing data ---only train data
+tokenized_train_df = train_df.apply(tokenizer_map_df, axis=1)
+tokenized_train_df = tokenized_train_df[['sentence', 'input_ids', 'attention_mask', 'label']]  #changing columns order
+
+#dataset and dataloader ---only train data
+train_dset = sst_binary_dataset(tokenized_train_df)
+train_loader = DataLoader(train_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
+
+#Loading model and tokenizer
+#model = DistilBertClassifier(backbone_weights=checkpoint['model']).to(device) #no frozen layers first
+model = DistilBertClassifier(backbone_weights=checkpoint['model'], freeze_backbone=True).to(device) #freezeing layers
+
+#defining loss and optimizer
+optim = AdamW(model.parameters(), lr=1e-5)
+loss_fn = nn.CrossEntropyLoss()
+
+num_epochs = 3
+num_training_steps = num_epochs * len(train_loader)
+lr_scheduler = get_scheduler('linear', optimizer=optim, num_warmup_steps=600, num_training_steps=num_training_steps)
+
+model.train()
+for epoch in range(num_epochs):
+  epoch_loss = 0.0
+  running_loss = 0.0
+  for i, batch in enumerate(train_loader):
+    input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['labels']
+    optim.zero_grad()
+
+    out = model(input_ids, attention_mask, return_hidden_embeddings=False)
+    loss = loss_fn(out, labels.type(torch.LongTensor).to(device))
+
+    loss.backward()
+    optim.step()
+    lr_scheduler.step()
+
+    epoch_loss+=loss.item()
+    running_loss+=loss.item()
+    if i!=0 and i%2000 == 0:
+      print('saving model at iter{}'.format(i))
+      torch.save({'epoch': epoch,
+                  'model_state_dict':model.state_dict(),
+                  'optimizer_state_dict':optim.state_dict(),
+                  'lr_scheduler':lr_scheduler.state_dict(),
+                  'running_loss':running_loss/2000},
+                  './distilbert-frozenweights-sst-binary-shuffle-true/Distilbert_reddit_sst_binary_epoch_{}_iter_{}.pt'.format(epoch, i))
+      
+      print('epoch: {}_final running_loss: {}'.format(epoch, running_loss/2000))
+      running_loss = 0.0
+      
+    if i!=0 and i%100==0:
+      print('epoch: {} iter: {} last_batch_loss: {}'.format(epoch, i, loss.item()))
+
+  epoch_loss = epoch_loss/len(train_loader)
+  print('storing "end of the epoch" weights epoch_loss: {}'.format(epoch_loss))
+  torch.save({'epoch': epoch,
+              'model_state_dict':model.state_dict(),
+              'optimizer_state_dict':optim.state_dict(),
+              'lr_scheduler':lr_scheduler.state_dict(),
+              'epoch_loss':epoch_loss},
+              './distilbert-frozenweights-sst-binary-shuffle-true/Distilbert_reddit_sst_binary_epoch_{}.pt'.format(epoch))
+
+"""###Financial Phrasebank
+
+"""
+
+import requests
+from sklearn.model_selection import train_test_split
+
+#downloading data
+url = 'https://www.researchgate.net/profile/Pekka-Malo/publication/251231364_FinancialPhraseBank-v10/data/0c96051eee4fb1d56e000000/FinancialPhraseBank-v10.zip'
+r = requests.get(url)
+with open('./FinancialPhraseBank-v10.zip', 'wb') as file:
+  file.write(r.content)
+!unzip ./FinancialPhraseBank-v10.zip -d FinancialPhraseBank-v10
+!rm ./FinancialPhraseBank-v10.zip
+
+def tokenizer_map_df(element):
+  #sst-2 tokenizer_df
+  tokenized_elemen = tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
+  return element.append(pd.Series([tokenized_elemen['input_ids'], tokenized_elemen['attention_mask']], index=['input_ids', 'attention_mask']))
+
+class fp_dataset(Dataset):
+  def __init__(self, dataframe):
+    self.df = dataframe
+  def __len__(self):
+    return len(self.df)
+  def __getitem__(self, idx): 
+    return {'input_ids': self.df['input_ids'].iloc[idx],
+            'attention_mask': self.df['attention_mask'].iloc[idx],
+            'label': self.df['label'].iloc[idx]}
+
+class Data_collator():
+  def __init__(self, tokenizer): 
+    self.tokenizer = tokenizer
+
+  def __call__(self, batch):
+    #Assumes we are wotking with a list of dictionaries
+    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
+                     'attention_mask': [element['attention_mask'] for element in batch]}
+    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
+    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
+
+    return {'input_ids': training_samples['input_ids'],
+            'attention_mask': training_samples['attention_mask'],
+            'labels': labels}
+
+#Loading financial phrasebank dataset
+#fp_dataframe_allagree = pd.read_csv('./FinancialPhraseBank-v10/FinancialPhraseBank-v1.0/Sentences_AllAgree.txt', sep='@', names=['sentence', 'label'], engine='python')
+fp_dataframe_50agree = pd.read_csv('./FinancialPhraseBank-v10/FinancialPhraseBank-v1.0/Sentences_50Agree.txt', sep='@', names=['sentence', 'label'], engine='python')
+
+#mapping data - allagree  ---may wanna use 50agree to increase data size
+label_mapping = {'negative':0, 'neutral':1, 'positive':2}
+fp_dataframe_50agree['label'] = fp_dataframe_50agree['label'].map(label_mapping)
+
+#defining tokenizer and Data Collator
+tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased') #using ver. 4.10.0.dev0
+collate_fn = Data_collator(tokenizer)
+
+#tokenizing data
+tokenized_fp_dataframe_50agree = fp_dataframe_50agree.apply(tokenizer_map_df, axis=1)
+tokenized_fp_dataframe_50agree = tokenized_fp_dataframe_50agree[['sentence', 'input_ids', 'attention_mask', 'label']]
+
+#splitting dataframe
+fp_train, fp_test = train_test_split(tokenized_fp_dataframe_50agree, test_size=0.2, random_state=2332)
+fp_train, fp_val = train_test_split(fp_train, test_size=0.1, random_state=2332)
+
+#datasets+dataloaders
+fp_dataset_train = fp_dataset(fp_train)
+fp_dataset_test = fp_dataset(fp_test)
+fp_dataset_val = fp_dataset(fp_val)
+
+train_loader = DataLoader(fp_dataset_train, shuffle=True, batch_size=16, collate_fn=collate_fn)
+test_loader = DataLoader(fp_dataset_test, shuffle=True, batch_size=16, collate_fn=collate_fn)
+val_loader = DataLoader(fp_dataset_val, shuffle=True, batch_size=16, collate_fn=collate_fn)
+
+###---Training
+
+#Loading model 
+model = DistilBertClassifier(backbone_weights=checkpoint['model'], out_dim=3).to(device) #no frozen layers first
+#model = DistilBertClassifier(backbone_weights=checkpoint['model'],  out_dim=3, freeze_backbone=True).to(device) #freezeing layers
+
+#defining loss and optimizer
+optim = AdamW(model.parameters(), lr=1e-5)
+loss_fn = nn.CrossEntropyLoss()
+
+num_epochs = 3
+num_training_steps = num_epochs * len(train_loader)
+lr_scheduler = get_scheduler('linear', optimizer=optim, num_warmup_steps=600, num_training_steps=num_training_steps)
+
+
+
+model.train()
+for epoch in range(num_epochs):
+  epoch_loss = 0.0
+  running_loss = 0.0
+  for i, batch in enumerate(train_loader):
+    input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['labels']
+    optim.zero_grad()
+
+    out = model(input_ids, attention_mask, return_hidden_embeddings=False)
+    loss = loss_fn(out, labels.type(torch.LongTensor).to(device))
+
+    loss.backward()
+    optim.step()
+    lr_scheduler.step()
+
+    epoch_loss+=loss.item()
+    running_loss+=loss.item()
+    if i!=0 and i%2000 == 0:
+      print('saving model at iter{}'.format(i))
+      torch.save({'epoch': epoch,
+                  'model_state_dict':model.state_dict(),
+                  'optimizer_state_dict':optim.state_dict(),
+                  'lr_scheduler':lr_scheduler.state_dict(),
+                  'running_loss':running_loss/2000},
+                  './distilbert-reddit-financial-phrasebank-3-epochs/Distilbert_reddit_financial_phrasebank_epoch_{}_iter_{}.pt'.format(epoch, i))
+      
+      print('epoch: {}_final running_loss: {}'.format(epoch, running_loss/2000))
+      running_loss = 0.0
+      
+    if i!=0 and i%100==0:
+      print('epoch: {} iter: {} last_batch_loss: {}'.format(epoch, i, loss.item()))
+
+  epoch_loss = epoch_loss/len(train_loader)
+  print('storing "end of the epoch" weights epoch_loss: {}'.format(epoch_loss))
+  torch.save({'epoch': epoch,
+              'model_state_dict':model.state_dict(),
+              'optimizer_state_dict':optim.state_dict(),
+              'lr_scheduler':lr_scheduler.state_dict(),
+              'epoch_loss':epoch_loss},
+              './distilbert-reddit-financial-phrasebank-3-epochs/Distilbert_reddit_financial_phrasebank_epoch_{}.pt'.format(epoch))
+
+"""####Testing"""
+
+import numpy as np
+
+#loading weights
+os.environ['KAGGLE_CONFIG_DIR'] = '/content'
+!kaggle datasets download -d muniozdaniel0/distilbert-reddit-financial-phrasebank-allagree
+!unzip ./distilbert-reddit-financial-phrasebank-allagree.zip -d ./distilbert-reddit-fp-allagree
+!rm ./distilbert-reddit-financial-phrasebank-allagree.zip
+
+def testing(model, data_loader, return_probs=False, keep_training=False, verbose=False):
+  loss = 0.0
+  accuracy = 0.0
+
+  labels = torch.tensor([], dtype=torch.double)
+  predictions = torch.tensor([], dtype=torch.double)
+  probabilities = torch.tensor([], dtype=torch.double)
+  
+  model.eval()
+  with torch.no_grad():
+    for i, elemen in enumerate(data_loader):
+      out_model = model(elemen['input_ids'], elemen['attention_mask'])
+      batch_loss = F.cross_entropy(out_model, elemen['labels'].type(torch.LongTensor))
+
+      probs = F.softmax(out_model, dim=1)
+      vals, idx = probs.topk(1, dim=1)
+      acc = sum(idx.squeeze() == elemen['labels'].type(torch.LongTensor))/len(idx.squeeze())
+
+      labels = torch.cat((labels, elemen['labels'].type(torch.LongTensor)))
+      predictions = torch.cat((predictions, idx.squeeze()))
+      probabilities = torch.cat((probabilities, vals.squeeze()))
+
+      loss+=batch_loss.item()
+      accuracy+=acc.item()
+
+      if verbose:
+        #print('step: {}, accuracy: {}, loss: {}'.format(i+1, accuracy/(i+1), loss/(i+1)))
+        print('step: {}, batch_loss: {}, batch_accuracy: {}'.format(i+1, batch_loss.item(), acc.item()))
+      
+  loss/=len(data_loader)
+  accuracy/=len(data_loader)
+  print('---- Total accuracy: {}, Total loss: {}'.format(accuracy, loss))
+  if keep_training:
+    model.train()
+
+  if not return_probs:
+    return loss, accuracy, labels, predictions
+  else:
+    return loss, accuracy, labels, predictions, probabilities
+
+
+def get_metrics(actual_values, predicted_values, index):
+  #casting to make sure everything is alright
+  actual_values = actual_values.type(torch.LongTensor).numpy()
+  predicted_values = predicted_values.type(torch.LongTensor).numpy()
+
+  gt_values = np.ma.masked_equal(actual_values, index).mask
+  mp_values = np.ma.masked_equal(predicted_values, index).mask
+
+  precision = sum(mp_values & gt_values)/sum(mp_values)
+  recall = sum(mp_values & gt_values)/sum(gt_values)
+  F1 = 2*((precision*recall)/(precision+recall))
+
+  return precision, recall, F1
+
+#loading datasets
+testing_train_dloader = DataLoader(fp_dataset_train, shuffle=False, batch_size=16, collate_fn=collate_fn)
+testing_test_dloader = DataLoader(fp_dataset_test, shuffle=False, batch_size=16, collate_fn=collate_fn)
+testing_val_dloader = DataLoader(fp_dataset_val, shuffle=False, batch_size=16, collate_fn=collate_fn)
+
+#loading checkpoints
+checkpoint_3_epochs = torch.load('./distilbert-reddit-fp-allagree/Distilbert_reddit_financial_phrasebank_3_epochs.pt', map_location=device)
+checkpoint_5_epochs = torch.load('./distilbert-reddit-fp-allagree/Distilbert_reddit_financial_phrasebank_5_epochs.pt', map_location=device)
+checkpoint_7_epochs = torch.load('./distilbert-reddit-fp-allagree/Distilbert_reddit_financial_phrasebank_7_epochs.pt', map_location=device)
+checkpoint_10_epochs = torch.load('./distilbert-reddit-fp-allagree/Distilbert_reddit_financial_phrasebank_10_epochs.pt', map_location=device)
+
+##evaluating '3_epochs'
+model = DistilBertClassifier(out_dim=3)
+model.load_state_dict(checkpoint_3_epochs['model_state_dict'])
+
+print('\n-----train')
+train_loss, train_acc, train_true_values, train_preds = testing(model, testing_train_dloader)
+print('\n-----test')
+test_loss, test_acc, test_true_values, test_preds = testing(model, testing_test_dloader)
+print('\n-----val')
+val_loss, val_acc, val_true_values, val_preds = testing(model, testing_val_dloader)
+
+##evaluating weights '5_epochs'
+model = DistilBertClassifier(out_dim=3)
+model.load_state_dict(checkpoint_5_epochs['model_state_dict'])
+
+print('\n-----train')
+train_loss_5, train_acc_5, train_true_values_5, train_preds_5 = testing(model, testing_train_dloader)
+print('\n-----test')
+test_loss_5, test_acc_5, test_true_values_5, test_preds_5 = testing(model, testing_test_dloader)
+print('\n-----val')
+val_loss_5, val_acc_5, val_true_values_5, val_preds_5 = testing(model, testing_val_dloader)
+
+##evaluating weights '7_epochs'
+model = DistilBertClassifier(out_dim=3)
+model.load_state_dict(checkpoint_7_epochs['model_state_dict'])
+
+print('\n-----train')
+train_loss_7, train_acc_7, train_true_values_7, train_preds_7 = testing(model, testing_train_dloader)
+print('\n-----test')
+test_loss_7, test_acc_7, test_true_values_7, test_preds_7 = testing(model, testing_test_dloader)
+print('\n-----val')
+val_loss_7, val_acc_7, val_true_values_7, val_preds_7 = testing(model, testing_val_dloader)
+
+##evaluating weights '10_epochs'
+model = DistilBertClassifier(out_dim=3)
+model.load_state_dict(checkpoint_10_epochs['model_state_dict'])
+
+print('\n-----train')
+train_loss_10, train_acc_10, train_true_values_10, train_preds_10 = testing(model, testing_train_dloader)
+print('\n-----test')
+test_loss_10, test_acc_10, test_true_values_10, test_preds_10 = testing(model, testing_test_dloader)
+print('\n-----val')
+val_loss_10, val_acc_10, val_true_values_10, val_preds_10 = testing(model, testing_val_dloader)
+
+testing_df = pd.DataFrame(columns=['train', 'test', 'evaluation'])
+testing_df.loc['3_epochs'] = [train_acc, test_acc, val_acc]
+testing_df.loc['5_epochs'] = [train_acc_5, test_acc_5, val_acc_5]
+testing_df.loc['7_epochs'] = [train_acc_7, test_acc_7, val_acc_7]
+testing_df.loc['10_epochs'] = [train_acc_10, test_acc_10, val_acc_10]
+
+#may need to double test on glue
+testing_df.round(2)
 
