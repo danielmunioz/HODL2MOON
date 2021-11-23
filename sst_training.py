@@ -11,8 +11,12 @@ Original file is located at
 !pip install transformers
 
 import os
-import pandas as pd
+import requests
 from collections import OrderedDict
+
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
 
 import torch
 from torch import nn
@@ -25,14 +29,169 @@ from transformers import AdamW, get_scheduler, DistilBertModel, DistilBertConfig
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 #loads only backbone weights
-os.environ['KAGGLE_CONFIG_DIR'] = '/content'
+os.environ['KAGGLE_CONFIG_DIR'] = './'
 !kaggle datasets download -d muniozdaniel0/final-distilbert-weight
 !unzip ./final-distilbert-weight.zip -d ./final-distilbert-weight
 !rm ./final-distilbert-weight.zip
 
-#loading backbone checkpoint ----may be a good idea to change it to 'backbone_chackpoint'
+#loading backbone checkpoint ----may be a good idea to change it to 'backbone_checkpoint'
 checkpoint = torch.load('./final-distilbert-weight/distilbert_reddit_epoch_2_iter_final.pt', map_location=device)
 checkpoint['model'] = OrderedDict({k[11:]: v for k, v in checkpoint['model'].items() if 'distilbert' in k})  #OrderedDict to keep it consistant with pytorch
+
+"""###Utils"""
+
+##sst-2 regresor
+def tokenizer_map(element):
+  return tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
+
+class Data_collator():
+  def __init__(self, tokenizer): 
+    self.tokenizer = tokenizer
+
+  def __call__(self, batch):
+    #Assumes we are wotking with a list of dictionaries
+    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
+                     'attention_mask': [element['attention_mask'] for element in batch]}
+    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
+    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
+
+    return {'input_ids': training_samples['input_ids'],
+            'attention_mask': training_samples['attention_mask'],
+            'labels': labels}
+
+##sst-2 binary
+def tokenizer_map_df(element):
+  #sst-2 tokenizer_df
+  tokenized_elemen = tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
+  return element.append(pd.Series([tokenized_elemen['input_ids'], tokenized_elemen['attention_mask']], index=['input_ids', 'attention_mask']))
+  
+class Data_collator():
+  def __init__(self, tokenizer): 
+    self.tokenizer = tokenizer
+
+  def __call__(self, batch):
+    #Assumes we are wotking with a list of dictionaries
+    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
+                     'attention_mask': [element['attention_mask'] for element in batch]}
+    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
+    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
+
+    return {'input_ids': training_samples['input_ids'],
+            'attention_mask': training_samples['attention_mask'],
+            'labels': labels}
+
+##financial phrasebank
+def tokenizer_map_df(element):
+  #sst-2 tokenizer_df
+  tokenized_elemen = tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
+  return element.append(pd.Series([tokenized_elemen['input_ids'], tokenized_elemen['attention_mask']], index=['input_ids', 'attention_mask']))
+
+class Data_collator():
+  def __init__(self, tokenizer): 
+    self.tokenizer = tokenizer
+
+  def __call__(self, batch):
+    #Assumes we are wotking with a list of dictionaries
+    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
+                     'attention_mask': [element['attention_mask'] for element in batch]}
+    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
+    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
+
+    return {'input_ids': training_samples['input_ids'],
+            'attention_mask': training_samples['attention_mask'],
+            'labels': labels}
+
+##sentiment 140
+#### -----current version
+class tokenizer_map_df():
+  def __init__(self, tokenizer, column_name=None):
+    self.tokenizer = tokenizer
+    self.column_name = column_name
+  
+  def __call__(self, element):
+    if not self.column_name:
+      tokenized_elemen = tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
+    else:
+      tokenized_elemen = tokenizer(element[self.column_name], max_length=tokenizer.model_max_length, truncation=True)
+
+    return element.append(pd.Series([tokenized_elemen['input_ids'], tokenized_elemen['attention_mask']], index=['input_ids', 'attention_mask']))
+
+### -----reads array_strings as arrays
+def str2arrray(elemen):
+  return np.fromstring(elemen[1:-1], sep=',', dtype=np.int64)
+  
+
+### -----current version
+class Data_collator():
+  #List of dictionaries version
+  def __init__(self, tokenizer): 
+    self.tokenizer = tokenizer
+
+  def __call__(self, batch):
+    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
+                     'attention_mask': [element['attention_mask'] for element in batch]}
+    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
+    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
+
+    return {'input_ids': training_samples['input_ids'],
+            'attention_mask': training_samples['attention_mask'],
+            'labels': labels}
+
+"""###Datasets"""
+
+class sst_binary_dataset(Dataset):
+  def __init__(self, dataframe):
+    self.df = dataframe
+
+  def __len__(self):
+    return len(self.df)
+  
+  def __getitem__(self, idx):
+    return {'input_ids': self.df.iloc[idx]['input_ids'], 
+            'attention_mask': self.df.iloc[idx]['attention_mask'],
+            'label': self.df.iloc[idx]['label']}
+
+class fp_dataset(Dataset):
+  def __init__(self, dataframe):
+    self.df = dataframe
+
+  def __len__(self):
+    return len(self.df)
+    
+  def __getitem__(self, idx): 
+    return {'input_ids': self.df['input_ids'].iloc[idx],
+            'attention_mask': self.df['attention_mask'].iloc[idx],
+            'label': self.df['label'].iloc[idx]}
+
+class Sentiment140(Dataset):
+  def __init__(self, dataframe):
+    self.df = dataframe
+
+  def __len__(self):
+    return len(self.df)
+
+  def __getitem__(self, idx):
+    return {'input_ids': self.df['input_ids'].iloc[idx],
+            'attention_mask': self.df['attention_mask'].iloc[idx],
+            'label': self.df['label'].iloc[idx]}
+
+class df_dataset(Dataset):
+  def __init__(self, dataframe, label_name=None):
+    """
+    Initializes a torch.dataset from a dataframe that contains the columns: 'input_ids', 'attention_mask', 'label'
+
+    Args:
+      dataframe: A pandas dataframe
+    """
+    self.df = dataframe
+  
+  def __len__(self):
+    return len(self.df)
+  
+  def __getitem(self, idx):
+    return {'input_ids': self.df['input_ids'].iloc[idx],
+            'attention_mask': self.df['attention_mask'].iloc[idx],
+            'label': self.df[label_name].iloc[idx] if label_name else self.df['label'].iloc[idx]}
 
 """###Models"""
 
@@ -95,25 +254,6 @@ class DistilBertClassifier(nn.Module):
       return hidden_embeddings, out
 
 """###sst-2 Regressor"""
-
-#sst-2 tokenizer_fn and collator
-def tokenizer_map(element):
-  return tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
-
-class Data_collator():
-  def __init__(self, tokenizer): 
-    self.tokenizer = tokenizer
-
-  def __call__(self, batch):
-    #Assumes we are wotking with a list of dictionaries
-    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
-                     'attention_mask': [element['attention_mask'] for element in batch]}
-    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
-    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
-
-    return {'input_ids': training_samples['input_ids'],
-            'attention_mask': training_samples['attention_mask'],
-            'labels': labels}
 
 #defining tokenizer and DataCollator
 tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')                    #using ver. 4.10.0.dev0
@@ -235,38 +375,6 @@ data_dir = tf.keras.utils.get_file(
     extract=True)
 data_dir = os.path.splitext(data_dir)[0]
 
-class sst_binary_dataset(Dataset):
-  def __init__(self, dataframe):
-    self.df = dataframe
-
-  def __len__(self):
-    return len(self.df)
-  
-  def __getitem__(self, idx):
-    return {'input_ids': self.df.iloc[idx]['input_ids'], 
-            'attention_mask': self.df.iloc[idx]['attention_mask'],
-            'label': self.df.iloc[idx]['label']}
-
-class Data_collator():
-  def __init__(self, tokenizer): 
-    self.tokenizer = tokenizer
-
-  def __call__(self, batch):
-    #Assumes we are wotking with a list of dictionaries
-    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
-                     'attention_mask': [element['attention_mask'] for element in batch]}
-    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
-    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
-
-    return {'input_ids': training_samples['input_ids'],
-            'attention_mask': training_samples['attention_mask'],
-            'labels': labels}
-
-def tokenizer_map_df(element):
-  #sst-2 tokenizer_df
-  tokenized_elemen = tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
-  return element.append(pd.Series([tokenized_elemen['input_ids'], tokenized_elemen['attention_mask']], index=['input_ids', 'attention_mask']))
-
 #defining tokenizer and dcollator
 tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased') #using ver. 4.10.0.dev0
 collate_fn = Data_collator(tokenizer)
@@ -341,9 +449,6 @@ for epoch in range(num_epochs):
 
 """
 
-import requests
-from sklearn.model_selection import train_test_split
-
 #downloading data
 url = 'https://www.researchgate.net/profile/Pekka-Malo/publication/251231364_FinancialPhraseBank-v10/data/0c96051eee4fb1d56e000000/FinancialPhraseBank-v10.zip'
 r = requests.get(url)
@@ -352,41 +457,11 @@ with open('./FinancialPhraseBank-v10.zip', 'wb') as file:
 !unzip ./FinancialPhraseBank-v10.zip -d FinancialPhraseBank-v10
 !rm ./FinancialPhraseBank-v10.zip
 
-def tokenizer_map_df(element):
-  #sst-2 tokenizer_df
-  tokenized_elemen = tokenizer(element['sentence'], max_length=tokenizer.model_max_length, truncation=True)
-  return element.append(pd.Series([tokenized_elemen['input_ids'], tokenized_elemen['attention_mask']], index=['input_ids', 'attention_mask']))
-
-class fp_dataset(Dataset):
-  def __init__(self, dataframe):
-    self.df = dataframe
-  def __len__(self):
-    return len(self.df)
-  def __getitem__(self, idx): 
-    return {'input_ids': self.df['input_ids'].iloc[idx],
-            'attention_mask': self.df['attention_mask'].iloc[idx],
-            'label': self.df['label'].iloc[idx]}
-
-class Data_collator():
-  def __init__(self, tokenizer): 
-    self.tokenizer = tokenizer
-
-  def __call__(self, batch):
-    #Assumes we are wotking with a list of dictionaries
-    training_dict = {'input_ids': [element['input_ids'] for element in batch], 
-                     'attention_mask': [element['attention_mask'] for element in batch]}
-    training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
-    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
-
-    return {'input_ids': training_samples['input_ids'],
-            'attention_mask': training_samples['attention_mask'],
-            'labels': labels}
-
 #Loading financial phrasebank dataset
 #fp_dataframe_allagree = pd.read_csv('./FinancialPhraseBank-v10/FinancialPhraseBank-v1.0/Sentences_AllAgree.txt', sep='@', names=['sentence', 'label'], engine='python')
 fp_dataframe_50agree = pd.read_csv('./FinancialPhraseBank-v10/FinancialPhraseBank-v1.0/Sentences_50Agree.txt', sep='@', names=['sentence', 'label'], engine='python')
 
-#mapping data - allagree  ---may wanna use 50agree to increase data size
+#mapping data - allagree
 label_mapping = {'negative':0, 'neutral':1, 'positive':2}
 fp_dataframe_50agree['label'] = fp_dataframe_50agree['label'].map(label_mapping)
 
@@ -596,4 +671,172 @@ testing_df.loc['10_epochs'] = [train_acc_10, test_acc_10, val_acc_10]
 
 #may need to double test on glue
 testing_df.round(2)
+
+"""
+###Sentiment140"""
+
+from sklearn.model_selection import train_test_split
+
+os.environ['KAGGLE_CONFIG_DIR'] = './'
+!kaggle datasets download -d muniozdaniel0/sentiment140-tokenized
+!unzip ./sentiment140-tokenized.zip -d ./sentiment140tokenized-train
+!rm ./sentiment140-tokenized.zip
+
+def training_distilbert(model, data_loader, device, test_dloader=None, model_optimizer='AdamW', learning_rate=1e-5, loss_function=nn.CrossEntropyLoss(), 
+                        epochs=3, scheduler='linear', warmup_steps=600,
+                        saving_dir='./', model_name='distilber_model'):
+  model.train()
+  loss_fn = loss_function
+  optim = AdamW(model.parameters(), lr=learning_rate) if model_optimizer == 'AdamW' else model_optimizer(model.parameters(), lr=learning_rate)
+
+  num_epochs = epochs
+  num_training_steps = num_epochs * len(data_loader)
+  lr_scheduler = get_scheduler(scheduler, optimizer=optim, num_warmup_steps=warmup_steps, num_training_steps=num_training_steps)
+
+  for epoch in range(num_epochs):
+    epoch_loss = 0.0
+    running_loss = 0.0    
+    for i, batch in enumerate(data_loader):
+      input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['labels'].type(torch.LongTensor).to(device)
+      optim.zero_grad()
+
+      out = model(input_ids, attention_mask, return_hidden_embeddings=False)
+      loss = loss_fn(out, labels)
+
+      loss.backward()
+      optim.step()
+      lr_scheduler.step()
+
+      epoch_loss+=loss.item()
+      running_loss+=loss.item()
+      #may wanna add a 'limit' variable
+      if i!=0 and i%20000 == 0:
+        running_loss/=20000
+        print('epoch: {}, iter: {}, running_loss: {}   --------saving model'.format(epoch, i, running_loss))
+
+        torch.save({'epoch': epoch,
+                    'model_state_dict':model.state_dict(),
+                    'optimizer_state_dict':optim.state_dict(),
+                    'lr_scheduler':lr_scheduler.state_dict(),
+                    'running_loss':running_loss},
+                    os.path.join(saving_dir, model_name)+'_epoch_{}_iter_{}.pt'.format(epoch, i))
+        running_loss = 0.0
+        
+      #if i!=0 and i%1000==0:
+      #  print('epoch: {} iter: {} last_batch_loss: {}'.format(epoch, i, loss.item()))
+
+    epoch_loss = epoch_loss/len(data_loader)
+    print('storing "end of the epoch" weights epoch_loss: {}'.format(epoch_loss))
+    torch.save({'epoch': epoch,
+                'model_state_dict':model.state_dict(),
+                'optimizer_state_dict':optim.state_dict(),
+                'lr_scheduler':lr_scheduler.state_dict(),
+                'epoch_loss':epoch_loss},
+                os.path.join(saving_dir, model_name)+'_epoch_{}.pt'.format(epoch))
+     
+    if test_dloader:
+      testing_loss, testing_accuracy = inner_testing(model, test_dloader, device, keep_training=True)
+      print('----Testing:  loss: {}, accuracy: {}'.format(testing_loss, testing_accuracy))
+
+  train_loss, train_accuracy = inner_testing(model, data_loader, device)
+  print('----After training metrics:  loss: {}, accuracy: {}'.format(train_loss, train_accuracy))
+  return train_loss, train_accuracy
+
+
+def inner_testing(model, data_loader, device, keep_training=True):
+  loss = 0.0
+  accuracy = 0.0
+  model.eval()
+  with torch.no_grad():
+    for _, batch in enumerate(data_loader):
+      input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['labels'].type(torch.LongTensor).to(device)
+      out_model = model(input_ids, attention_mask)
+      batch_loss = F.cross_entropy(out_model, labels)
+
+      probs = F.softmax(out_model, dim=1)
+      vals, idx = probs.topk(1, dim=1)
+      acc = sum(idx.squeeze() == labels) / len(idx.squeeze())
+
+      loss+=batch_loss.item()
+      accuracy+=acc.item()
+
+  loss/=len(data_loader)
+  accuracy/=len(data_loader)
+  if keep_training:
+    model.train()
+    
+  return loss, accuracy
+
+#defining tokenizer and Data Collator
+tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased') #using ver. 4.10.0.dev0
+collate_fn = Data_collator(tokenizer)
+
+#loading data
+tokenized_sentiment140 = pd.read_csv('./sentiment140tokenized-train/Sentiment140Tokenized_Train.csv', 
+                                     converters={'input_ids': str2arrray, 'attention_mask': str2arrray})
+s140_train, s140_test = train_test_split(tokenized_sentiment140, test_size=0.1, random_state=2332)
+
+train_ds = Sentiment140(s140_train)
+test_ds = Sentiment140(s140_test)
+
+train_loader = DataLoader(train_ds, shuffle=True, batch_size=16, collate_fn=collate_fn)
+test_loader = DataLoader(test_ds, shuffle=True, batch_size=16, collate_fn=collate_fn)
+
+#Loading model
+#model = DistilBertClassifier(backbone_weights=checkpoint['model']).to(device) #no frozen layers first
+model = DistilBertClassifier(backbone_weights=checkpoint['model'], freeze_backbone=True).to(device) #freezeing layers
+
+training_loss, training_accuracy = training_distilbert(model, train_loader, device, test_dloader=test_loader, epochs=3,
+                                                       saving_dir='./distilbert_reddit_sentiment140_weights_frozen', 
+                                                       model_name='distilbert_reddit_sentiment140_frozen')
+
+storing "end of the epoch" weights epoch_loss: 0.4903511339673565
+----Testing:  loss: 0.4551193830393255, accuracy: 0.7836375
+storing "end of the epoch" weights epoch_loss: 0.47061067622088726
+----Testing:  loss: 0.4487661852501333, accuracy: 0.78718125
+storing "end of the epoch" weights epoch_loss: 0.4657545945646862
+----Testing:  loss: 0.44414490223899483, accuracy: 0.78995
+
+----After training metrics:  loss: 0.44328316023556724, accuracy: 0.7914486111111111
+
+"""###Testing"""
+
+def get_metrics(actual_values, predicted_values, index):
+  #casting datatypes to make sure everything is alright
+  actual_values = actual_values.type(torch.LongTensor).numpy()
+  predicted_values = predicted_values.type(torch.LongTensor).numpy()
+
+  gt_values = np.ma.masked_equal(actual_values, index).mask
+  mp_values = np.ma.masked_equal(predicted_values, index).mask
+
+  precision = sum(mp_values & gt_values)/sum(mp_values)
+  recall = sum(mp_values & gt_values)/sum(gt_values)
+  F1 = 2*((precision*recall)/(precision+recall))
+
+  return precision, recall, F1
+
+def testing_classifier(model, data_loader, device, keep_training=True):
+  loss = 0.0
+  accuracy = 0.0
+
+  model.eval()
+  with torch.no_grad():
+    for _, batch in enumerate(data_loader):
+      input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['labels'].type(torch.LongTensor).to(device)
+      out_model = model(input_ids, attention_mask)
+      batch_loss = F.cross_entropy(out_model, labels)
+
+      probs = F.softmax(out_model, dim=1)
+      vals, idx = probs.topk(1, dim=1)
+      acc = sum(idx.squeeze() == labels) / len(idx.squeeze())
+
+      loss+=batch_loss.item()
+      accuracy+=acc.item()
+
+  loss/=len(data_loader)
+  accuracy/=len(data_loader)
+  if keep_training:
+    model.train()
+    
+  return loss, accuracy
 
