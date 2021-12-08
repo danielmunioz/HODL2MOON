@@ -5,9 +5,6 @@ from transformers import AdamW, get_scheduler
 
 from .testing import inner_testing
 
-def testing_inner():
-  print('here 4')
-  print(inner_testing('asdasdad'))
 
 def training_distilbert(model, data_loader, device, epochs=3, test_dloader=None, model_optimizer='AdamW', learning_rate=1e-5, loss_function=nn.CrossEntropyLoss(), 
                         scheduler='linear', warmup_steps=600, save_after_iter=None,
