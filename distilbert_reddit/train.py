@@ -38,7 +38,6 @@ def training_distilbert(model, data_loader, device, epochs=3, test_dloader=None,
   loss_fn = loss_function
   optim = AdamW(model.parameters(), lr=learning_rate) if model_optimizer == 'AdamW' else model_optimizer(model.parameters(), lr=learning_rate)
 
-
   num_epochs = epochs
   num_training_steps = num_epochs * len(data_loader)
   lr_scheduler = get_scheduler(scheduler, optimizer=optim, num_warmup_steps=warmup_steps, num_training_steps=num_training_steps)
