@@ -1,9 +1,11 @@
 import torch
 import torch.nn.functional as F
 
-def inner_testing(model, data_loader, device, keep_training=True):
+def inner_testing(model, data_loader, device, loss_fn=F.cross_entropy, keep_training=True):
   """
   Designed to test a model inside a training loop.
+  Recomended to use a loss from the torch.nn.funcional Module
+
   Returns loss and accuracy as float values.
   """
   loss = 0.0
@@ -13,9 +15,9 @@ def inner_testing(model, data_loader, device, keep_training=True):
     for _, batch in enumerate(data_loader):
       input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['labels'].type(torch.LongTensor).to(device)
       out_model = model(input_ids, attention_mask)
-      batch_loss = F.cross_entropy(out_model, labels)
+      batch_loss = loss_fn(out_model, labels)
 
-      probs = F.softmax(out_model, dim=1)
+      probs = F.softmax(out_model, dim=1) #may wanna modify this to account regressors
       vals, idx = probs.topk(1, dim=1)
       acc = sum(idx.squeeze() == labels) / len(idx.squeeze())
 
