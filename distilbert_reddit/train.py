@@ -6,8 +6,8 @@ from transformers import AdamW, get_scheduler
 from .testing import inner_testing
 
 
-def training_distilbert(model, data_loader, device, epochs=3, test_dloader=None, model_optimizer='AdamW', learning_rate=1e-5, loss_function=nn.CrossEntropyLoss(), 
-                        scheduler='linear', warmup_steps=600, save_after_iter=None,
+def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3, model_optimizer='AdamW', learning_rate=1e-5, loss_function=nn.CrossEntropyLoss(), 
+                        scheduler='linear', warmup_steps=600, save_every_iter=None,
                         saving_dir='./', model_name='distilbert_model'):
   """
   Trains a DistilBert-based model, for classification only (for now) 
@@ -25,7 +25,7 @@ def training_distilbert(model, data_loader, device, epochs=3, test_dloader=None,
     scheduler: Optional, defaults to 'Linear', 'get_scheduler' input parameter (from the transformers library)
     warmup_steps: Optional, defaults to 600
 
-    save_after_iter: Optional, num of iterations after wich a checkpoint of the model will be saved
+    save_every_iter: Optional, num of iterations after wich a checkpoint of the model will be saved
     saving dir: str, directory to save the model into, defaults to current dir
     model_name: str, name used to save the model
 
@@ -41,8 +41,9 @@ def training_distilbert(model, data_loader, device, epochs=3, test_dloader=None,
   num_epochs = epochs
   num_training_steps = num_epochs * len(data_loader)
   lr_scheduler = get_scheduler(scheduler, optimizer=optim, num_warmup_steps=warmup_steps, num_training_steps=num_training_steps)
-  if save_after_iter == None:
-    save_after_iter = -1
+  
+  save_failsafe = True if save_every_iter else False
+  save_every_iter = save_every_iter if save_every_iter else 0
     
   for epoch in range(num_epochs):
     epoch_loss = 0.0
@@ -61,8 +62,8 @@ def training_distilbert(model, data_loader, device, epochs=3, test_dloader=None,
       epoch_loss+=loss.item()
       running_loss+=loss.item()
       
-      if i!=0 and i%(save_after_iter-1) == 0: 
-        running_loss/=save_after_iter
+      if i!=0 and i%(save_every_iter-1) == 0 and save_failsafe:
+        running_loss/=save_every_iter
         print('epoch: {}, iter: {}, running_loss: {}   --------saving model'.format(epoch, i, running_loss))
 
         torch.save({'epoch': epoch,

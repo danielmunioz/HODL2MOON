@@ -1,4 +1,6 @@
 from torch import nn
+import torch.nn.functional as F
+
 from transformers import DistilBertModel, DistilBertConfig
 
 

@@ -20,6 +20,9 @@ def str2arrray(elemen):
 #### -----current version
 class tokenizer_map_df():
   def __init__(self, tokenizer, column_name=None):
+    '''
+    Column name: the name of the column containing the text to process
+    '''
     self.tokenizer = tokenizer
     self.column_name = column_name
   

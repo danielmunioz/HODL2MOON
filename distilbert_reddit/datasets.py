@@ -47,13 +47,15 @@ class df_dataset(Dataset):
 
     Args:
       dataframe: A pandas dataframe
+      label_name: str, name of the column containing the labels, if none defaults to 'label'
     """
     self.df = dataframe
+    self.label_name = label_name
   
   def __len__(self):
     return len(self.df)
   
-  def __getitem(self, idx):
+  def __getitem__(self, idx):
     return {'input_ids': self.df['input_ids'].iloc[idx],
             'attention_mask': self.df['attention_mask'].iloc[idx],
-            'label': self.df[label_name].iloc[idx] if label_name else self.df['label'].iloc[idx]}
+            'label': self.df[self.label_name].iloc[idx] if self.label_name else self.df['label'].iloc[idx]}
