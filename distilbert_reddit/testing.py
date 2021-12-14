@@ -13,7 +13,7 @@ def inner_testing(model, data_loader, device, loss_fn=F.cross_entropy, keep_trai
   model.eval()
   with torch.no_grad():
     for _, batch in enumerate(data_loader):
-      input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['labels'].type(torch.LongTensor).to(device)
+      input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['label'].type(torch.LongTensor).to(device)
       out_model = model(input_ids, attention_mask)
       batch_loss = loss_fn(out_model, labels)
 

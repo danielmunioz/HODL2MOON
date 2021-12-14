@@ -10,7 +10,7 @@ def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3,
                         scheduler='linear', warmup_steps=600, save_every_iter=None,
                         saving_dir='./', model_name='distilbert_model'):
   """
-  Trains a DistilBert-based model, for classification only (for now) 
+  Trains a DistilBert-based model, for classification only (for now)
 
   Args:
     model: A pytorch model
@@ -49,7 +49,8 @@ def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3,
     epoch_loss = 0.0
     running_loss = 0.0    
     for i, batch in enumerate(data_loader):
-      input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['labels'].type(torch.LongTensor).to(device)
+      #the name 'label' comes from the use of data_collator
+      input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['label'].type(torch.LongTensor).to(device)
       optim.zero_grad()
 
       out = model(input_ids, attention_mask, return_hidden_embeddings=False)

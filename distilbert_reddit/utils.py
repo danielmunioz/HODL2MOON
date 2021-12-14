@@ -37,16 +37,19 @@ class tokenizer_map_df():
 
 ### -----current version
 class Data_collator():
+  """
+  Data collator designed to work with a 'df_Dataset'
+  Assumes a list of dictionaries as input
+  """
   def __init__(self, tokenizer): 
     self.tokenizer = tokenizer
 
   def __call__(self, batch):
-    #Assumes a list of dictionaries as input
     training_dict = {'input_ids': [element['input_ids'] for element in batch], 
                      'attention_mask': [element['attention_mask'] for element in batch]}
     training_samples = self.tokenizer.pad(training_dict, return_tensors = 'pt')
-    labels = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
+    label = torch.tensor([element['label'] for element in batch], dtype=torch.float32)
 
     return {'input_ids': training_samples['input_ids'],
             'attention_mask': training_samples['attention_mask'],
-            'labels': labels}
+            'label': label}
