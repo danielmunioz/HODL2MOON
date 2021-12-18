@@ -1,9 +1,26 @@
 import os
 import torch
-from torch import nn
-from transformers import AdamW, get_scheduler
+import pandas as pd
+from sklearn.model_selection import train_test_split
 
+from torch import nn
+from torch.utils.data import DataLoader
+from transformers import AdamW, get_scheduler, DistilBertTokenizerFast
+
+from .utils import Data_collator, tokenizer_map_df
+from .models import DistilBertClassifier
 from .testing import inner_testing
+from .datasets import df_dataset
+
+
+def split_Dataframe(dataframe, random_seed=2332, test_size=0.2, val_size=0.1):
+  """
+  test_size: precentage of the WHOLE dataframe to be used for testing
+  val_size: precentage of the train set to be used for validation
+  """
+  train, test = train_test_split(dataframe, test_size=test_size, random_state=random_seed)
+  train, val = train_test_split(train, test_size=val_size, random_state=random_seed)
+  return train, test, val
 
 
 def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3, model_optimizer='AdamW', learning_rate=1e-5, loss_function=nn.CrossEntropyLoss(), 
@@ -49,7 +66,7 @@ def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3,
     epoch_loss = 0.0
     running_loss = 0.0    
     for i, batch in enumerate(data_loader):
-      #the name 'label' comes from the use of data_collator
+      #'label' comes from data_collator
       input_ids, attention_mask, labels = batch['input_ids'].to(device), batch['attention_mask'].to(device), batch['label'].type(torch.LongTensor).to(device)
       optim.zero_grad()
 
@@ -62,10 +79,10 @@ def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3,
 
       epoch_loss+=loss.item()
       running_loss+=loss.item()
-      
+      #should probably add running accuracy
       if i!=0 and i%(save_every_iter-1) == 0 and save_failsafe:
         running_loss/=save_every_iter
-        print('epoch: {}, iter: {}, running_loss: {}   --------saving model'.format(epoch, i, running_loss))
+        print('epoch: {}, iter: {}, running_loss: {:.4f}   --------saving model'.format(epoch, i, running_loss))
 
         torch.save({'epoch': epoch,
                     'model_state_dict':model.state_dict(),
@@ -80,7 +97,7 @@ def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3,
       #  print('epoch: {} iter: {} last_batch_loss: {}'.format(epoch, i, loss.item()))
 
     epoch_loss = epoch_loss/len(data_loader)
-    print('storing "end of the epoch" weights epoch_loss: {}'.format(epoch_loss))
+    print('storing "end of the epoch" weights, epoch_loss: {:.4f}'.format(epoch_loss))
     torch.save({'epoch': epoch,
                 'model_state_dict':model.state_dict(),
                 'optimizer_state_dict':optim.state_dict(),
@@ -90,8 +107,48 @@ def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3,
      
     if test_dloader:
       testing_loss, testing_accuracy = inner_testing(model, test_dloader, device, keep_training=True)
-      print('----Testing:  loss: {}, accuracy: {}'.format(testing_loss, testing_accuracy))
+      print('----Test Set:  loss: {:.4f}, accuracy: {:.4f}'.format(testing_loss, testing_accuracy))
 
   train_loss, train_accuracy = inner_testing(model, data_loader, device)
-  print('----After training metrics:  loss: {}, accuracy: {}'.format(train_loss, train_accuracy))
+  print('----Train set Metrics:  loss: {:.4f}, accuracy: {:.4f}'.format(train_loss, train_accuracy))
   return train_loss, train_accuracy
+
+
+def financial_phrasebank_train( backbone_weights, train_dloader=None, test_dloader=None, dataframe_dir=None, 
+                               saving_dir='./', model_name='FP_Model', return_loss_acc=False):
+  #uses gpu if available, may be a good idea to add an option to switch between devices
+  device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+  
+  if not train_dloader and not dataframe_dir:
+    raise RuntimeError('Must provide either train_dloader or dataframe_dir to proceed')
+
+  if dataframe_dir:
+    fp_dataframe = pd.read_csv(dataframe_dir, sep='@', names=['sentence', 'label'], engine='python')
+    label_mapping = {'negative':0, 'neutral':1, 'positive':2}
+    fp_dataframe['label'] = fp_dataframe['label'].map(label_mapping)
+    
+
+    tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased') #using ver. 4.10.0.dev0
+    collate_fn = Data_collator(tokenizer)
+    tokenizer_map = tokenizer_map_df(tokenizer, column_name='sentence')
+    tokenized_df = fp_dataframe.apply(tokenizer_map, axis=1)
+
+    train, test, _= split_Dataframe(tokenized_df)                                #uses the default split data values (for now)
+
+
+    train_dset = df_dataset(train, label_name='label')
+    test_dset = df_dataset(test, label_name='label')  
+    train_dloader = DataLoader(train_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
+    test_dloader = DataLoader(test_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
+
+
+  model = DistilBertClassifier(backbone_weights=backbone_weights, out_dim=3).to(device)
+
+  train_loss, train_acc = training_distilbert(model, train_dloader, device, test_dloader=test_dloader, save_every_iter=30, 
+                                              saving_dir=saving_dir, model_name=model_name)
+
+  #not using eval yet, may be a better to create an evaluation function
+  #val_dset = df_dataset(val, label_name='label') 
+  #val_dloader = DataLoader(val_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
+  if return_loss_acc:
+    return train_loss, train_acc
