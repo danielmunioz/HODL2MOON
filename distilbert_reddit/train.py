@@ -1,26 +1,32 @@
+import argparse
+
+
 import os
 import torch
 import pandas as pd
-from sklearn.model_selection import train_test_split
 
 from torch import nn
 from torch.utils.data import DataLoader
 from transformers import AdamW, get_scheduler, DistilBertTokenizerFast
 
-from .utils import Data_collator, tokenizer_map_df
+from .utils import Data_collator, tokenizer_map_df, split_dataframe
 from .models import DistilBertClassifier
 from .testing import inner_testing
 from .datasets import df_dataset
 
 
-def split_Dataframe(dataframe, random_seed=2332, test_size=0.2, val_size=0.1):
-  """
-  test_size: precentage of the WHOLE dataframe to be used for testing
-  val_size: precentage of the train set to be used for validation
-  """
-  train, test = train_test_split(dataframe, test_size=test_size, random_state=random_seed)
-  train, val = train_test_split(train, test_size=val_size, random_state=random_seed)
-  return train, test, val
+parser = argparse.ArgumentParser()
+parser.add_argument('--backbone_weights_dir', metavar='PATH', type=str, required=True, help='path to the backbone weights')
+parser.add_argument('--dataset_dir', metavar='PATH', type=str, required=True, help='path to the dataset file')
+parser.add_argument('--model_name', metavar='NAME', type=str, default='FP_Distilbert', help='name of the model')
+parser.add_argument('--save_dir', metavar='PATH', type=str, default='./', help='path to save the model')
+#args=parser.parse_args() may wanna try using this while importing a something from here
+
+
+def main():
+  args=parser.parse_args()
+  financial_phrasebank_train(args.backbone_weights_dir, data_frame_dir=args.dataset_dir, 
+                             saving_dir = args.save_dir, model_name=args.model_name)
 
 
 def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3, model_optimizer='AdamW', learning_rate=1e-5, loss_function=nn.CrossEntropyLoss(), 
@@ -114,7 +120,7 @@ def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3,
   return train_loss, train_accuracy
 
 
-def financial_phrasebank_train( backbone_weights, train_dloader=None, test_dloader=None, dataframe_dir=None, 
+def financial_phrasebank_train(backbone_weights, train_dloader=None, test_dloader=None, dataframe_dir=None, 
                                saving_dir='./', model_name='FP_Model', return_loss_acc=False):
   #uses gpu if available, may be a good idea to add an option to switch between devices
   device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -133,7 +139,7 @@ def financial_phrasebank_train( backbone_weights, train_dloader=None, test_dload
     tokenizer_map = tokenizer_map_df(tokenizer, column_name='sentence')
     tokenized_df = fp_dataframe.apply(tokenizer_map, axis=1)
 
-    train, test, _= split_Dataframe(tokenized_df)                                #uses the default split data values (for now)
+    train, test, _= split_dataframe(tokenized_df)                                #uses the default split data values (for now)
 
 
     train_dset = df_dataset(train, label_name='label')
@@ -152,3 +158,7 @@ def financial_phrasebank_train( backbone_weights, train_dloader=None, test_dload
   #val_dloader = DataLoader(val_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
   if return_loss_acc:
     return train_loss, train_acc
+
+
+if __name__ == '__main__': 
+  main()
