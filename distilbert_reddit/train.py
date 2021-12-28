@@ -2,6 +2,7 @@ import os
 import torch
 import argparse
 import pandas as pd
+from collections import OrderedDict
 
 from torch import nn
 from torch.utils.data import DataLoader
@@ -23,8 +24,54 @@ parser.add_argument('--save_dir', metavar='PATH', type=str, default='./', help='
 
 def main():
   args=parser.parse_args()
-  financial_phrasebank_train(args.backbone_weights_dir, data_frame_dir=args.dataset_dir, 
+  device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+  checkpoint_backbone = torch.load(args.backbone_weights_dir, map_location=device)    #loading weights
+  #may wanna add the option to load weights with different names
+  checkpoint_backbone['model'] = OrderedDict({k[11:]: v for k, v in checkpoint_backbone['model'].items() if 'distilbert' in k})
+
+  financial_phrasebank_train(checkpoint_backbone['model'], data_frame_dir=args.dataset_dir, 
                              saving_dir = args.save_dir, model_name=args.model_name)
+
+
+def financial_phrasebank_train(backbone_weights, train_dloader=None, test_dloader=None, dataframe_dir=None, 
+                               saving_dir='./', model_name='FP_Model', return_loss_acc=False):
+  
+  
+  if not train_dloader and not dataframe_dir:
+    raise RuntimeError('Must provide either train_dloader or dataframe_dir to proceed')
+
+  if dataframe_dir:
+    fp_dataframe = pd.read_csv(dataframe_dir, sep='@', names=['sentence', 'label'], engine='python')
+    label_mapping = {'negative':0, 'neutral':1, 'positive':2}
+    fp_dataframe['label'] = fp_dataframe['label'].map(label_mapping)
+    
+
+    tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased') #using ver. 4.10.0.dev0
+    collate_fn = Data_collator(tokenizer)
+    tokenizer_map = tokenizer_map_df(tokenizer, column_name='sentence')
+    tokenized_df = fp_dataframe.apply(tokenizer_map, axis=1)
+
+    train, test, _= split_dataframe(tokenized_df)                                #uses the default split data values (for now)
+
+
+    train_dset = df_dataset(train, label_name='label')
+    test_dset = df_dataset(test, label_name='label')  
+    train_dloader = DataLoader(train_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
+    test_dloader = DataLoader(test_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
+
+
+  model = DistilBertClassifier(backbone_weights=backbone_weights, out_dim=3).to(device)
+
+  train_loss, train_acc = training_distilbert(model, train_dloader, device, test_dloader=test_dloader, save_every_iter=30, 
+                                              saving_dir=saving_dir, model_name=model_name)
+
+  #not using eval yet, may be a better to create an evaluation function
+  #val_dset = df_dataset(val, label_name='label') 
+  #val_dloader = DataLoader(val_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
+  if return_loss_acc:
+    return train_loss, train_acc
+
 
 
 def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3, model_optimizer='AdamW', learning_rate=1e-5, loss_function=nn.CrossEntropyLoss(), 
@@ -116,46 +163,6 @@ def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3,
   train_loss, train_accuracy = inner_testing(model, data_loader, device)
   print('----Train set Metrics:  loss: {:.4f}, accuracy: {:.4f}'.format(train_loss, train_accuracy))
   return train_loss, train_accuracy
-
-
-def financial_phrasebank_train(backbone_weights, train_dloader=None, test_dloader=None, dataframe_dir=None, 
-                               saving_dir='./', model_name='FP_Model', return_loss_acc=False):
-  #uses gpu if available, may be a good idea to add an option to switch between devices
-  device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-  
-  if not train_dloader and not dataframe_dir:
-    raise RuntimeError('Must provide either train_dloader or dataframe_dir to proceed')
-
-  if dataframe_dir:
-    fp_dataframe = pd.read_csv(dataframe_dir, sep='@', names=['sentence', 'label'], engine='python')
-    label_mapping = {'negative':0, 'neutral':1, 'positive':2}
-    fp_dataframe['label'] = fp_dataframe['label'].map(label_mapping)
-    
-
-    tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased') #using ver. 4.10.0.dev0
-    collate_fn = Data_collator(tokenizer)
-    tokenizer_map = tokenizer_map_df(tokenizer, column_name='sentence')
-    tokenized_df = fp_dataframe.apply(tokenizer_map, axis=1)
-
-    train, test, _= split_dataframe(tokenized_df)                                #uses the default split data values (for now)
-
-
-    train_dset = df_dataset(train, label_name='label')
-    test_dset = df_dataset(test, label_name='label')  
-    train_dloader = DataLoader(train_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
-    test_dloader = DataLoader(test_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
-
-
-  model = DistilBertClassifier(backbone_weights=backbone_weights, out_dim=3).to(device)
-
-  train_loss, train_acc = training_distilbert(model, train_dloader, device, test_dloader=test_dloader, save_every_iter=30, 
-                                              saving_dir=saving_dir, model_name=model_name)
-
-  #not using eval yet, may be a better to create an evaluation function
-  #val_dset = df_dataset(val, label_name='label') 
-  #val_dloader = DataLoader(val_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
-  if return_loss_acc:
-    return train_loss, train_acc
 
 
 if __name__ == '__main__': 
