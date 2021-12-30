@@ -8,10 +8,12 @@ from torch import nn
 from torch.utils.data import DataLoader
 from transformers import AdamW, get_scheduler, DistilBertTokenizerFast
 
-from .utils import Data_collator, tokenizer_map_df, split_dataframe
-from .models import DistilBertClassifier
-from .testing import inner_testing
-from .datasets import df_dataset
+import utils, models, testing, datasets
+
+#from .utils import Data_collator, tokenizer_map_df, split_dataframe
+#from .models import DistilBertClassifier
+#from .testing import inner_testing
+#from .datasets import df_dataset
 
 
 parser = argparse.ArgumentParser()
@@ -30,11 +32,11 @@ def main():
   #may wanna add the option to load weights with different names
   checkpoint_backbone['model'] = OrderedDict({k[11:]: v for k, v in checkpoint_backbone['model'].items() if 'distilbert' in k})
 
-  financial_phrasebank_train(checkpoint_backbone['model'], data_frame_dir=args.dataset_dir, 
+  financial_phrasebank_train(checkpoint_backbone['model'], device, data_frame_dir=args.dataset_dir, 
                              saving_dir = args.save_dir, model_name=args.model_name)
 
 
-def financial_phrasebank_train(backbone_weights, train_dloader=None, test_dloader=None, dataframe_dir=None, 
+def financial_phrasebank_train(backbone_weights, device, train_dloader=None, test_dloader=None, dataframe_dir=None, 
                                saving_dir='./', model_name='FP_Model', return_loss_acc=False):
   
   
@@ -48,26 +50,26 @@ def financial_phrasebank_train(backbone_weights, train_dloader=None, test_dloade
     
 
     tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased') #using ver. 4.10.0.dev0
-    collate_fn = Data_collator(tokenizer)
-    tokenizer_map = tokenizer_map_df(tokenizer, column_name='sentence')
+    collate_fn = utils.Data_collator(tokenizer)
+    tokenizer_map = utils.tokenizer_map_df(tokenizer, column_name='sentence')
     tokenized_df = fp_dataframe.apply(tokenizer_map, axis=1)
 
-    train, test, _= split_dataframe(tokenized_df)                                #uses the default split data values (for now)
+    train, test, _= utils.split_dataframe(tokenized_df)                                #uses the default split data values (for now)
 
 
-    train_dset = df_dataset(train, label_name='label')
-    test_dset = df_dataset(test, label_name='label')  
+    train_dset = datasets.df_dataset(train, label_name='label')
+    test_dset = datasets.df_dataset(test, label_name='label')  
     train_dloader = DataLoader(train_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
     test_dloader = DataLoader(test_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
 
 
-  model = DistilBertClassifier(backbone_weights=backbone_weights, out_dim=3).to(device)
+  model = models.DistilBertClassifier(backbone_weights=backbone_weights, out_dim=3).to(device)
 
   train_loss, train_acc = training_distilbert(model, train_dloader, device, test_dloader=test_dloader, save_every_iter=30, 
                                               saving_dir=saving_dir, model_name=model_name)
 
   #not using eval yet, may be a better to create an evaluation function
-  #val_dset = df_dataset(val, label_name='label') 
+  #val_dset = datasets.df_dataset(val, label_name='label') 
   #val_dloader = DataLoader(val_dset, shuffle=True, batch_size=16, collate_fn=collate_fn)
   if return_loss_acc:
     return train_loss, train_acc
@@ -157,10 +159,10 @@ def training_distilbert(model, data_loader, device, test_dloader=None, epochs=3,
                 os.path.join(saving_dir, model_name)+'_epoch_{}.pt'.format(epoch))
      
     if test_dloader:
-      testing_loss, testing_accuracy = inner_testing(model, test_dloader, device, keep_training=True)
+      testing_loss, testing_accuracy = testing.inner_testing(model, test_dloader, device, keep_training=True)
       print('----Test Set:  loss: {:.4f}, accuracy: {:.4f}'.format(testing_loss, testing_accuracy))
 
-  train_loss, train_accuracy = inner_testing(model, data_loader, device)
+  train_loss, train_accuracy = testing.inner_testing(model, data_loader, device)
   print('----Train set Metrics:  loss: {:.4f}, accuracy: {:.4f}'.format(train_loss, train_accuracy))
   return train_loss, train_accuracy
 
