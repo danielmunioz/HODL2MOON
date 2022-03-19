@@ -32,8 +32,8 @@ def main():
   #may wanna add the option to load weights with different names
   checkpoint_backbone['model'] = OrderedDict({k[11:]: v for k, v in checkpoint_backbone['model'].items() if 'distilbert' in k})
 
-  financial_phrasebank_train(checkpoint_backbone['model'], device, data_frame_dir=args.dataset_dir, 
-                             saving_dir = args.save_dir, model_name=args.model_name)
+  financial_phrasebank_train(checkpoint_backbone['model'], device, dataframe_dir=args.dataset_dir, saving_dir = args.save_dir, 
+  model_name=args.model_name)
 
 
 def financial_phrasebank_train(backbone_weights, device, train_dloader=None, test_dloader=None, dataframe_dir=None, 
@@ -44,7 +44,7 @@ def financial_phrasebank_train(backbone_weights, device, train_dloader=None, tes
     raise RuntimeError('Must provide either train_dloader or dataframe_dir to proceed')
 
   if dataframe_dir:
-    fp_dataframe = pd.read_csv(dataframe_dir, sep='@', names=['sentence', 'label'], engine='python')
+    fp_dataframe = pd.read_csv(dataframe_dir, names=['sentence', 'label'], sep='@', encoding='ISO-8859-1')
     label_mapping = {'negative':0, 'neutral':1, 'positive':2}
     fp_dataframe['label'] = fp_dataframe['label'].map(label_mapping)
     
