@@ -1,7 +1,10 @@
 import torch
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from transformers import DistilBertTokenizerFast
 
-from utils import inference_dataset
+from utils import inference_dataset, Data_collator, tokenizer_map_df
+
 
 def inner_testing(model, data_loader, device, loss_fn=F.cross_entropy, keep_training=True):
   """
