@@ -1,6 +1,6 @@
 # HODL2MOON🚀
 
-**An AI-powered Sentiment indicator for "meme" and crypto communities**
+**An AI-powered Sentiment indicator for "meme" and crypto online communities.**
 
 Containing several models finetunned with data primarily extracted from reddit, aimed to better recognize common words used by modern "meme" traders and communities for improved predictions.
 
@@ -8,7 +8,7 @@ All the models contain a backbone based on the DistilBert Architecture, pre-trai
 
 <br/>
 
-**E.g. Inference on Bitcoin data extracted from reddit communities through 2021**
+**Example: Inference on Bitcoin data extracted from reddit communities through 2021**
 
 <br/>
 
