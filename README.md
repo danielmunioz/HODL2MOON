@@ -15,10 +15,10 @@ Currently supporting __sentiment classification__ (meassuring by classes e.g. ei
 
 ***For reference: 0=Negative, 1=Neutral, 2=Positive***
 
-**Average sentiment from 2021/01/01 to 2021/05/01**
+**Average daily sentiment from 2021/01/01 to 2021/05/01**
 
 ![inference_01_to_05](https://user-images.githubusercontent.com/47380745/160052570-564b75af-8b63-417f-8bf7-c2330d48c020.png)
 
-**Average sentiment from 2021/05/02 to 2021/08/16**
+**Average daily sentiment from 2021/05/02 to 2021/08/16**
 ![inference_05_to_08](https://user-images.githubusercontent.com/47380745/160056557-0ef780e9-26e7-4193-8dca-53146f752c5f.png)
 
