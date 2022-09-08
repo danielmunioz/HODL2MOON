@@ -1,10 +1,10 @@
 # HODL2MOON🚀
 
-**An AI-powered Sentiment indicator for "meme" and crypto online communities.**
+**An AI-powered Sentiment Indicator tailored for online crypto communities and meme trading.**
 
-Containing several models finetunned with data extracted mainly from reddit, aimed to better recognize common words used by modern "meme" traders and communities for improved predictions.
+Containing several models finetunned using data primarily extracted from reddit, aimed to better understand modern terminology used by contemporary traders and the communities surrounding them.
 
-All the models contain a backbone model, based on the DistilBert Architecture, that was pre-trained using a masked language modeling objective on a collection of crypto-oriented data extracted from the aforementioned social network, then a multi layer perceptron (MLP) head is used to further finetune the models on various sentiment analysis datasets (such as "financial phrasebank", "Stanford Sentiment Treebank", etc.). 
+All the models make use of a DistilBert backbone that was pre-trained using a masked language modeling objective on a collection of crypto-oriented datasets extracted from the aforementioned social network, then a multi layer perceptron (MLP) head is used to further finetune the models on various of the most popular sentiment analysis datasets (such as "financial phrasebank", "Stanford Sentiment Treebank", etc.). 
 Currently supporting __sentiment classification__ (meassuring by classes e.g. either negative or positive) and __sentiment regression__ (mesuring from 0: _negative_, all the way up to 1: _positive_).
 
 Check out the Datasets on [Kaggle](https://www.kaggle.com/datasets/muniozdaniel0/dogecoin-top-daily-reddit-submission)!
